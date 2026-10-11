@@ -122,7 +122,9 @@ class PatchEmbed(nn.Module):
 class TransformerEncoderBlock(nn.Module):
     """Self-attention then a small feed-forward, each with a skip. Tokens (B, T, dim) in and out.
 
-    Attention is written with plain Linear layers so the multiply counter in stats.py can see them.
+    The q, k, v, o projections and the feed-forward are plain Linear layers, so a layer-hook multiply counter
+    sees them. The two attention matrix products (q @ k^T and att @ v) are raw tensor maths; stats.py must add
+    those separately (2 * T * T * dim per block) or the count is low.
     """
 
     def __init__(self, dim: int = 64, heads: int = 4, mlp: int = 128):
