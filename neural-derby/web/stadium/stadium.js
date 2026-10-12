@@ -42,7 +42,9 @@
     $("bets-banner").textContent = m.bets_open ? "PLACE YOUR BETS" : (m.data_loaded ? "GATES CLOSED. PRESS SPACE TO RACE" : "GATES CLOSED. LOADING PHOTOS...");
     if (m.act === "SHIP" && m.champion && cardByKey[m.champion]) $("ship-champ").textContent = cardByKey[m.champion].name;
   }
-  fetch("/api/join-url").then(r => r.json()).then(j => { $("join-url").textContent = j.url; $("join-url2").textContent = j.url; });
+  // Like post(): a server that is down or a broken reply shows a toast, never a silent blank address.
+  fetch("/api/join-url").then(r => r.json()).then(j => { if (!j || !j.url) throw new Error("no url"); $("join-url").textContent = j.url; $("join-url2").textContent = j.url; })
+    .catch(() => toast("COULD NOT GET THE JOIN ADDRESS FROM THE SERVER. RELOAD THE PAGE.", 8000));
   $("qr").src = "/api/qr.png"; $("qr2").src = "/api/qr.png";
 
   // ---------- paddock ----------
@@ -208,7 +210,11 @@
 
   // ---------- errors ----------
   // Something broke on the laptop (loading the photos, or the race). The operator has to act, so it stays up longer.
-  function onError(m) { toast(`${m.where === "race" ? "THE RACE" : "LOADING THE PHOTOS"} FAILED: ${m.message}. PRESS R TO REPLAY THE LAST RACE.`, 8000); }
+  // A race failure happens in DERBY, where R replays. A failed photo load cannot be recovered without a server restart.
+  function onError(m) {
+    toast(m.where === "race" ? `THE RACE FAILED: ${m.message}. PRESS R TO REPLAY THE LAST RACE.`
+                             : `LOADING THE PHOTOS FAILED: ${m.message}. RESTART THE SERVER.`, 8000);
+  }
 
   // ---------- socket ----------
   function connect() {
