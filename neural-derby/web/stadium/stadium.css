@@ -1,0 +1,103 @@
+@font-face { font-family: "PS2P"; src: url("/vendor/PressStart2P-Regular.ttf") format("truetype"); }
+:root {
+  --bg: #0b0f2a; --panel: #121a3f; --line: #2a3a80; --amber: #ffb000; --text: #f4f4f4; --dim: #8fa0ff;
+  --border: 4px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: "PS2P", monospace; overflow: hidden; }
+body { width: 1920px; height: 1080px; }
+.scanlines { pointer-events: none; position: fixed; inset: 0; z-index: 50;
+  background: repeating-linear-gradient(0deg, rgba(0,0,0,0.18) 0 2px, transparent 2px 4px); }
+header { height: 90px; display: flex; align-items: center; justify-content: space-between; padding: 0 40px;
+  border-bottom: var(--border) solid var(--line); background: var(--panel); }
+.title { font-size: 34px; letter-spacing: 2px; } .title span { color: var(--amber); margin-left: 18px; }
+.act { font-size: 26px; color: var(--amber); }
+.counters span { font-size: 16px; margin-left: 36px; color: var(--dim); }
+main { height: 990px; position: relative; }
+.screen { display: none; position: absolute; inset: 0; padding: 40px; }
+.screen.on { display: block; }
+.hero { font-size: 110px; text-align: center; margin-top: 220px; color: var(--amber); text-shadow: 8px 8px 0 #000; }
+.hero.small { font-size: 64px; margin-top: 60px; }
+.sub { font-size: 24px; text-align: center; margin-top: 40px; color: var(--dim); }
+.blink { animation: blink 1s steps(2, start) infinite; font-size: 22px; line-height: 1.6; text-align: center; margin-top: 60px; }
+@keyframes blink { to { visibility: hidden; } }
+.top-banner { margin: 0 0 24px; font-size: 32px; color: var(--amber); }
+.paddock, .ship { display: flex; gap: 40px; height: 100%; }
+.qr-box { width: 520px; background: var(--panel); border: var(--border) solid var(--line); padding: 30px 20px; text-align: center; text-wrap: balance; }
+.qr-box img { width: 400px; height: 400px; image-rendering: pixelated; background: #fff; padding: 12px; margin: 20px 0; }
+.label { font-size: 18px; line-height: 1.8; color: var(--dim); }
+/* 16px keeps any "http://<lan ip>:8000/p" on one line inside the box */
+.url { font-size: 16px; color: var(--amber); word-break: break-all; line-height: 1.6; }
+.big { font-size: 56px; margin-top: 30px; }
+/* 8 x 6 tiles of 142px fill the wall beside the QR box; the newest 48 photos stay up */
+.wall { flex: 1; display: grid; grid-template-columns: repeat(8, 142px); grid-auto-rows: 142px; gap: 10px; align-content: start; overflow: hidden; }
+.big-wall { grid-template-columns: repeat(12, 142px); gap: 12px; }
+.tile { position: relative; width: 142px; height: 142px; border: 3px solid var(--line); background: #000; image-rendering: pixelated; animation: pop 0.25s steps(3, end); }
+.tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tile .tag { position: absolute; left: 0; right: 0; bottom: 0; font-size: 10px; line-height: 1.6; background: rgba(0,0,0,0.8); padding: 4px; color: var(--text); white-space: nowrap; overflow: hidden; }
+.tile .tag b { display: block; font-size: 12px; font-weight: normal; color: var(--amber); }
+.tile.flip { animation: flip 0.4s steps(4, end); }
+@keyframes pop { from { transform: scale(0.2); } to { transform: scale(1); } }
+@keyframes flip { 0% { transform: rotateY(0); } 50% { transform: rotateY(90deg); } 100% { transform: rotateY(0); } }
+.caption { position: absolute; left: 0; right: 0; bottom: 40px; text-align: center; font-size: 36px; color: var(--amber); text-shadow: 6px 6px 0 #000; }
+/* two equal rows that end 40px above the bottom edge, like every other screen */
+.cards { display: grid; grid-template-columns: repeat(4, 1fr); grid-auto-rows: 1fr; gap: 24px; }
+.card { background: var(--panel); border: var(--border) solid var(--c, var(--line)); padding: 18px; position: relative; }
+.card .name { font-size: 22px; color: var(--c); margin-bottom: 10px; }
+.card canvas { display: block; margin: 6px 0 10px; image-rendering: pixelated; }
+.card .block { font-size: 12px; color: var(--dim); margin-bottom: 10px; line-height: 1.6; }
+.card .tag { font-size: 12px; line-height: 1.7; min-height: 82px; margin-bottom: 10px; }
+.stat { font-size: 12px; display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.stat span { width: 80px; }   /* same label width, so the three bars start at the same place */
+.stat .bar { flex: 1; height: 16px; background: #000; border: 2px solid var(--line); }
+.stat .bar i { display: block; height: 100%; background: var(--c); }
+/* beside the horse sprite, so a long name never runs into it */
+.card .odds { position: absolute; right: 18px; top: 74px; font-size: 14px; color: var(--amber); }
+.card .nums { font-size: 12px; color: var(--dim); margin-top: 10px; line-height: 1.6; }
+/* track + tote fill 794px, then a 20px gap, then the 96px ticker: 910px, the same as every screen */
+.derby { display: flex; gap: 30px; height: 794px; }
+.track-wrap { position: relative; background: #0d2a16; border: var(--border) solid #1f5a30; }
+#track { display: block; }
+.tote { flex: 1; background: #000; border: var(--border) solid var(--amber); padding: 18px; }
+.tote-title { color: var(--amber); font-size: 22px; text-align: center; margin-bottom: 18px; }
+.lap { font-size: 28px; text-align: center; color: var(--text); margin-bottom: 18px; }
+.tote ol { list-style: none; margin: 0; padding: 0; }
+.tote li { display: flex; align-items: center; gap: 10px; font-size: 16px; color: var(--amber); padding: 20px 6px; border-bottom: 2px dashed #332; }
+.tote li .sw { width: 18px; height: 18px; flex: none; } .tote li .acc { margin-left: auto; }
+.tote li.lead { background: #221; }
+/* two lines fit, so the longest commentary line is never cut off */
+.ticker { position: absolute; left: 40px; right: 40px; bottom: 40px; height: 96px; background: #000; border: var(--border) solid var(--line); padding: 12px 20px; font-size: 20px; line-height: 1.5; color: var(--amber); display: flex; align-items: center; overflow: hidden; }
+/* shown until the Sprint times arrive, so the screen is never blank */
+.sprint-wait { position: absolute; left: 0; right: 0; top: 400px; margin: 0; font-size: 32px; color: var(--amber); }
+/* bars and podium share one baseline; the whole block sits in the middle of the screen */
+#s-SPRINT.on { display: flex; flex-direction: column; justify-content: center; }
+.sprint { display: flex; gap: 40px; height: 420px; }
+.bars { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 22px; }
+.brow { display: flex; align-items: center; gap: 16px; font-size: 16px; }
+.brow .nm { width: 260px; } .brow .bb { flex: 1; height: 36px; background: #000; border: 3px solid var(--line); }
+.brow .bb i { display: block; height: 100%; transition: width 0.8s steps(12, end); }
+.brow .ms { width: 140px; text-align: right; color: var(--amber); }
+.podium { width: 700px; display: flex; align-items: flex-end; justify-content: center; gap: 20px; }
+.pod { width: 220px; text-align: center; }
+.pod .pname { font-size: 16px; line-height: 1.5; color: var(--c); margin-bottom: 10px; }
+.pod .box { background: var(--c); color: #000; padding: 14px 6px; font-size: 14px; line-height: 1.6; }
+.pod .box b { display: block; font-size: 18px; font-weight: normal; margin-bottom: 8px; }
+.pod.p1 .box { height: 340px; } .pod.p2 .box { height: 240px; } .pod.p3 .box { height: 160px; }
+.winners { margin-top: 30px; font-size: 18px; line-height: 2; color: var(--dim); text-align: center; }
+.winners b { color: var(--amber); }
+.verdict { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; height: 880px; }
+.vcard { background: var(--panel); border: var(--border) solid var(--c); padding: 26px; font-size: 16px; line-height: 1.8; overflow: hidden; }
+.vcard:only-child { grid-column: 1 / -1; justify-self: center; width: calc(50% - 15px); }   /* the odd horse out sits in the middle */
+.vcard .name { font-size: 30px; color: var(--c); margin-bottom: 16px; }
+.vcard p { margin: 0 0 12px; }
+.vtable { font-size: 13px; line-height: 1.4; width: 100%; border-collapse: collapse; margin-top: 16px; }
+.vtable td, .vtable th { border: 1px solid var(--line); padding: 5px 8px; text-align: left; }
+.vtable th { color: var(--dim); font-weight: normal; }
+.vtable .more td { color: var(--dim); }
+.hint { position: absolute; bottom: 20px; left: 0; right: 0; text-align: center; font-size: 14px; color: var(--dim); }
+.ship { align-items: center; }   /* both columns sit in the middle instead of leaving a half-empty panel */
+.ship-right { flex: 1; }
+.ship .hero.small { margin-top: 0; }
+.veteran { margin-top: 60px; font-size: 18px; line-height: 2; color: var(--dim); border: var(--border) dashed var(--line); padding: 20px; min-height: 160px; }
+.veteran:empty { display: none; }   /* no empty dashed box when there is no veteran result */
+.toast { position: fixed; top: 110px; right: 40px; max-width: 900px; background: #a00; color: #fff; padding: 14px 20px; font-size: 14px; line-height: 1.6; display: none; z-index: 60; }
