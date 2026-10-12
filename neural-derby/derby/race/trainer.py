@@ -54,14 +54,16 @@ class Race:
         self.events: list[LapEvent] = []
 
     def run(self) -> Iterator[LapEvent]:
+        """Every horse sees exactly the same photos, in the same order, with the same random augmentation, so only the architecture differs.
+        The call blocks the caller's thread while it waits out the pacing floor between laps."""
         t0 = time.perf_counter()
         n = self.data.n_train
         aug_gen = torch.Generator(device=self.device)
         for lap in range(1, self.laps + 1):
             lap_start = time.perf_counter()
             order = torch.randperm(n, generator=torch.Generator().manual_seed(self.seed * 1000 + lap)).to(self.device)
-            for i, h in enumerate(self.stable):
-                aug_gen.manual_seed(self.seed * 100_000 + lap * 100 + i)
+            for h in self.stable:
+                aug_gen.manual_seed(self.seed * 100_000 + lap * 100)
                 ev = self._train_one_lap(h.key, order, aug_gen, lap, t0)
                 self.events.append(ev)
                 yield ev
@@ -71,6 +73,7 @@ class Race:
                     time.sleep(remaining)
 
     def _train_one_lap(self, key: str, order: torch.Tensor, gen: torch.Generator, lap: int, t0: float) -> LapEvent:
+        """Train accuracy is measured on the augmented training batches as the model learns, so early in a race it can sit below test accuracy."""
         m, opt = self.models[key], self.opts[key]
         m.train()
         start = time.perf_counter()
@@ -95,6 +98,7 @@ class Race:
 
     @torch.no_grad()
     def evaluate(self, key: str) -> dict:
+        """Returns None for a kind (internet or live) that has no rows, and leaves the model in eval mode."""
         m = self.models[key]
         m.eval()
         preds = []

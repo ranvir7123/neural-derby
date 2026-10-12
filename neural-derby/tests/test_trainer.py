@@ -58,3 +58,13 @@ def test_same_seed_same_events():
 def test_to_dict_round_trip():
     e = LapEvent("textbook", 1, 0.5, 0.4, 0.4, None, 1.2, 10.0, 0.3)
     assert LapEvent(**e.to_dict()) == e
+
+
+def test_a_horse_gets_the_same_result_whatever_else_is_in_the_stable():
+    def textbook_event(horses):
+        race = Race(horses, synthetic(), laps=1, batch=16, lap_floor_s=0.0, seed=5, device="cpu")
+        return next(e for e in race.run() if e.horse == "textbook")
+
+    alone = textbook_event([stable.by_key("textbook")])
+    crowded = textbook_event([stable.by_key("featherweight"), stable.by_key("textbook")])
+    assert (alone.loss, alone.train_acc, alone.test_acc) == (crowded.loss, crowded.train_acc, crowded.test_acc)
