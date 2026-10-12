@@ -55,10 +55,27 @@
   // On a short screen RETAKE and SEND sit below the fold once the photo has its height: bring them into view.
   $("preview").onload = () => $("preview-box").scrollIntoView({ block: "end", behavior: "smooth" });
   $("retake").onclick = () => { $("preview-box").hidden = true; $("shot").value = ""; $("shot").click(); };
+  // A phone camera photo is often over the server's 5 MB limit, and some phones save HEIC, which the server
+  // refuses. Send an upright JPEG instead, at most 1024 px on its long side. The EXIF "turn me" tag is lost
+  // when the picture is re-encoded, so the turn is applied while drawing.
+  function decodeImg(file) {
+    return new Promise((ok, fail) => { const img = new Image(); img.onload = () => { URL.revokeObjectURL(img.src); ok(img); }; img.onerror = fail; img.src = URL.createObjectURL(file); });
+  }
+  async function shrink(file) {
+    let src, w, h;
+    try { src = await createImageBitmap(file, { imageOrientation: "from-image" }); w = src.width; h = src.height; }
+    catch (e) { src = await decodeImg(file); w = src.naturalWidth; h = src.naturalHeight; }   // an <img> also applies the EXIF turn
+    const k = Math.min(1, 1024 / Math.max(w, h)), c = document.createElement("canvas");
+    c.width = Math.round(w * k); c.height = Math.round(h * k);
+    c.getContext("2d").drawImage(src, 0, 0, c.width, c.height);
+    if (src.close) src.close();
+    return new Promise((ok, fail) => c.toBlob(b => b ? ok(b) : fail(new Error("could not make a JPEG")), "image/jpeg", 0.85));
+  }
   $("send").onclick = async () => {
     if (!shotFile || !chosenClass) return;
-    const fd = new FormData(); fd.append("device", device); fd.append("class_name", chosenClass); fd.append("file", shotFile, "photo.jpg");
     $("send").disabled = true;
+    const photo = await shrink(shotFile).catch(() => shotFile);   // cannot decode it here: send it as it is, the server will say why
+    const fd = new FormData(); fd.append("device", device); fd.append("class_name", chosenClass); fd.append("file", photo, "photo.jpg");
     const r = await fetch("/api/photo", { method: "POST", body: fd }).then(r => r.json()).catch(() => ({ error: "No connection. Try again." }));
     $("send").disabled = false;
     if (r.error) { banner(r.error); return; }
@@ -178,6 +195,9 @@
 
   // ---------- socket ----------
   const handlers = {
+    // The server says which role it gave this socket. A team link from before a server restart has an old token,
+    // so the server treats the phone as an ordinary one and the Sprint would never reach it: say so plainly.
+    hello: (m) => { if (!TEAM) banner("CONNECTED", true); else if (m.role === "team") banner("TEAM PHONE CONNECTED", true); else banner("TEAM LINK OUT OF DATE: ASK THE OPERATOR FOR THE NEW LINK"); },
     state: (m) => { state = m; route(); },
     horses: (m) => { cards = m.cards; renderBets(); route(); },   // on connect, state comes before horses: redraw with the real names
     lap: onLap, race_done: onRaceDone, sprint: onSprint, ship: onShip,
@@ -186,7 +206,8 @@
   function connect() {
     const role = TEAM ? "team&token=" + encodeURIComponent(TEAM_TOKEN) : "phone";
     const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws?role=${role}`);
-    ws.onopen = () => banner(TEAM ? "TEAM PHONE CONNECTED" : "CONNECTED", true);
+    // A restarted server has forgotten every nickname: tell it again (sending the same join twice is harmless).
+    ws.onopen = () => { if (nick) post("/api/join", { device, nick }); };
     ws.onmessage = (ev) => { const m = JSON.parse(ev.data); (handlers[m.type] || (() => {}))(m); };
     ws.onclose = () => { banner("RECONNECTING..."); setTimeout(connect, 3000); };
   }
