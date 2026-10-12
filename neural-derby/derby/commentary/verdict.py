@@ -9,6 +9,7 @@ LAP_GAP = 3            # laps of difference before we call a slow start
 MEMORISE_GAP = 0.20    # train minus test before we call memorising
 ROOM_GAP = 0.10        # internet minus room accuracy before we call the room's photos harder
 CONVERGED_FRAC = 0.9   # a horse "reached its stride" at 90 percent of its own final accuracy
+EPS = 1e-9             # decimal fractions are not exact in floating point (1.0 - 0.8 is 0.19999999999999996), so thresholds get a tiny allowance
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,11 @@ def pct(x: float) -> str:
     return f"{round(x * 100)} percent"
 
 
+def ms_text(x: float) -> str:
+    """Whole milliseconds hide small gaps (1.2 and 1.4 would both print as 1), so keep one decimal under 10 ms."""
+    return f"{x:.1f} ms" if x < 10 else f"{x:.0f} ms"
+
+
 def compute_facts(events: list[LapEvent], stats_by_horse: dict[str, dict], race: list[Standing],
                   sprint: list[SprintStanding], champion: list[ChampionStanding]) -> dict[str, Facts]:
     by: dict[str, list[LapEvent]] = defaultdict(list)
@@ -49,7 +55,7 @@ def compute_facts(events: list[LapEvent], stats_by_horse: dict[str, dict], race:
         evs = sorted(evs, key=lambda e: e.lap)
         last = evs[-1]
         target = last.test_acc * CONVERGED_FRAC
-        convergence_lap = next(e.lap for e in evs if e.test_acc >= target - 1e-9)
+        convergence_lap = next(e.lap for e in evs if e.test_acc >= target - EPS)
         max_gap = max(e.train_acc - e.test_acc for e in evs)
         st = stats_by_horse.get(horse, {"params": 0, "macs": 0, "depth": 0})
         out[horse] = Facts(
@@ -72,34 +78,42 @@ def verdicts(facts: dict[str, Facts], names: dict[str, str], n_train: int) -> di
     tb = facts.get("textbook")
     for key, f in facts.items():
         lines: list[str] = []
-        ms = f"{f.sprint_ms:.0f} ms" if f.sprint_ms is not None else "no time"
+        ms = ms_text(f.sprint_ms) if f.sprint_ms is not None else "no time"
         lines.append(f"Finished {ordinal(f.race_rank)} in the Derby at {pct(f.final_acc)}, "
                      f"{ordinal(f.sprint_rank)} in the Sprint ({ms}), {ordinal(f.champion_rank)} overall.")
         lines.append(f"{f.params:,} parameters, {f.macs:,} multiplies per photo, {f.depth} weight layers.")
 
         if key == "stairs" and "elevator" in facts:
             e = facts["elevator"]
-            if f.convergence_lap - e.convergence_lap >= LAP_GAP:
+            d = f.convergence_lap - e.convergence_lap
+            if d >= LAP_GAP:
                 lines.append(f"{nm(key)} reached its stride on lap {f.convergence_lap}; {nm('elevator')} got there on lap "
                              f"{e.convergence_lap}. Same depth, one shortcut.")
+            elif d <= -LAP_GAP:
+                lines.append(f"{nm(key)} reached its stride on lap {f.convergence_lap}; {nm('elevator')} took until lap "
+                             f"{e.convergence_lap}. This time the plain stairs set the pace.")
             else:
                 lines.append(f"At this depth the shortcuts did not change the pace (lap {f.convergence_lap} vs lap "
                              f"{e.convergence_lap}). Deeper buildings need elevators more.")
         if key == "elevator" and "stairs" in facts:
             s = facts["stairs"]
-            if s.convergence_lap - f.convergence_lap >= LAP_GAP:
+            d = s.convergence_lap - f.convergence_lap
+            if d >= LAP_GAP:
                 lines.append(f"The shortcuts paid off: stride on lap {f.convergence_lap} against {nm('stairs')}'s lap "
                              f"{s.convergence_lap}, with exactly the same parameters.")
+            elif d <= -LAP_GAP:
+                lines.append(f"The shortcuts did not pay off this time: stride on lap {f.convergence_lap} against "
+                             f"{nm('stairs')}'s lap {s.convergence_lap}, with exactly the same parameters.")
             else:
                 lines.append(f"Same parameters as {nm('stairs')} and about the same pace this time "
                              f"(lap {f.convergence_lap} vs lap {s.convergence_lap}).")
         if key == "featherweight" and tb is not None:
             if f.sprint_ms is not None and tb.sprint_ms is not None and f.sprint_ms < tb.sprint_ms:
                 lines.append(f"{f.macs:,} multiplies against {nm('textbook')}'s {tb.macs:,}. That is why it ran the Sprint in "
-                             f"{f.sprint_ms:.0f} ms against {tb.sprint_ms:.0f} ms.")
+                             f"{ms_text(f.sprint_ms)} against {ms_text(tb.sprint_ms)}.")
             elif f.sprint_ms is not None and tb.sprint_ms is not None:
                 lines.append(f"{f.macs:,} multiplies against {nm('textbook')}'s {tb.macs:,}, yet it was not faster on this device "
-                             f"({f.sprint_ms:.0f} ms vs {tb.sprint_ms:.0f} ms). Fewer multiplies only help when the runtime "
+                             f"({ms_text(f.sprint_ms)} vs {ms_text(tb.sprint_ms)}). Fewer multiplies only help when the runtime "
                              f"is tuned for depthwise layers.")
         if key == "spotlight" and tb is not None:
             delta = f.final_acc - tb.final_acc
@@ -110,13 +124,19 @@ def verdicts(facts: dict[str, Facts], names: dict[str, str], n_train: int) -> di
             lines.append(f"Three lens sizes cost {f.macs:,} multiplies against {nm('textbook')}'s {tb.macs:,}; "
                          f"accuracy {pct(f.final_acc)} against {pct(tb.final_acc)}.")
         if key == "influencer":
-            lines.append(f"{pct(f.final_acc)} with {n_train:,} photos. Transformers have no built-in idea that nearby pixels "
-                         f"belong together; they must learn it from data, and there was not enough.")
-        if f.max_gap >= MEMORISE_GAP:
+            if tb is None:
+                lines.append(f"{pct(f.final_acc)} with {n_train:,} photos.")
+            elif f.final_acc < tb.final_acc - EPS:
+                lines.append(f"{pct(f.final_acc)} with {n_train:,} photos. Transformers have no built-in idea that nearby pixels "
+                             f"belong together; they must learn it from data, and there was not enough.")
+            else:
+                lines.append(f"{pct(f.final_acc)} with {n_train:,} photos. Transformers usually need far more photos than "
+                             f"this; today it kept up with the convolution horses anyway.")
+        if f.max_gap >= MEMORISE_GAP - EPS:
             lines.append(f"It memorised: at its worst, {pct(f.max_gap)} more on photos it had seen than on new ones.")
         if f.acc_internet is not None and f.acc_live is not None:
             line = f"On internet photos {pct(f.acc_internet)}; on the room's photos {pct(f.acc_live)}."
-            if f.acc_internet - f.acc_live >= ROOM_GAP:
+            if f.acc_internet - f.acc_live >= ROOM_GAP - EPS:
                 line += " The room's photos are harder: different light, different backgrounds."
             lines.append(line)
         out[key] = lines
