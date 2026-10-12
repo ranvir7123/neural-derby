@@ -48,3 +48,13 @@ def test_form_guide_counts_race_and_champion_wins(tmp_path: Path):
     assert fg["a"] == {"race_wins": 2, "champion_wins": 2, "races": 2}
     assert fg["b"] == {"race_wins": 0, "champion_wins": 0, "races": 2}
     assert recorder.latest_race(tmp_path) == p2
+
+
+def test_replay_speed_divides_the_gaps(tmp_path: Path):
+    evs = events()                                   # recorded span is 0.15 s
+    p = recorder.write_race(tmp_path / "r.json", evs, [], [], [], {}, {})
+    start = time.perf_counter()
+    out = list(recorder.replay(p, speed=100.0))      # should wait about 0.0015 s, not 0.15 s
+    elapsed = time.perf_counter() - start
+    assert out == evs
+    assert elapsed < 0.05
