@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "derby",
+      "runtimeExecutable": "C:\\dev\\study\\Edge-Ai\\.claude\\worktrees\\elastic-tesla-5be637\\neural-derby\\.venv\\Scripts\\python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "derby.server.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"],
+      "cwd": "C:\\dev\\study\\Edge-Ai\\.claude\\worktrees\\elastic-tesla-5be637\\neural-derby",
+      "port": 8000
+    }
+  ]
+}

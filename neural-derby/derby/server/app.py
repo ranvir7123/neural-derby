@@ -131,7 +131,7 @@ def state_payload(state: AppState) -> dict:
     d.update({"photos": state.live.count(), "bets": len(state.bets), "phones": state.hub.count("phone"),
               "horses": [h.key for h in state.stable], "n_live_train": state.data.n_live_train if state.data else 0,
               "n_live_test": state.data.n_live_test if state.data else 0,
-              "champion": state.champion[0].horse if state.champion else None})
+              "champion": state.champion[0].horse if state.champion else None, "laps": state.settings.laps})
     return d
 
 
@@ -182,10 +182,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             state.last.pop(kind, None)
 
     # ---------- pages ----------
-    if (settings.web_dir / "stadium").is_dir():
-        app.mount("/stadium", StaticFiles(directory=settings.web_dir / "stadium", html=True), name="stadium")
-        app.mount("/phone", StaticFiles(directory=settings.web_dir / "phone", html=True), name="phone")
-        app.mount("/control", StaticFiles(directory=settings.web_dir / "control", html=True), name="control")
+    # Each folder is served only if it exists: a missing folder would stop the server from starting.
+    for page in ("stadium", "phone", "control"):
+        if (settings.web_dir / page).is_dir():
+            app.mount(f"/{page}", StaticFiles(directory=settings.web_dir / page, html=True), name=page)
+    if (settings.web_dir / "vendor").is_dir():
         app.mount("/vendor", StaticFiles(directory=settings.web_dir / "vendor"), name="vendor")
 
     @app.get("/p")
@@ -201,6 +202,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         buf = io.BytesIO()
         img.save(buf, "PNG")
         return Response(buf.getvalue(), media_type="image/png", headers={"X-Join-Url": url})
+
+    @app.get("/api/join-url")
+    def join_url():
+        return {"url": settings.public_url or f"http://{lan_ip()}:{config.PORTS['http']}/p"}
 
     # ---------- state and operator ----------
     @app.get("/api/state")

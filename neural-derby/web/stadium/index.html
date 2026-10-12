@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Neural Derby</title>
+<meta name="viewport" content="width=1920">
+<link rel="stylesheet" href="stadium.css">
+</head>
+<body>
+<div class="scanlines"></div>
+<header>
+  <div class="title">NEURAL<span>DERBY</span></div>
+  <div class="act" id="act"></div>
+  <div class="counters"><span id="c-phones">0 PHONES</span><span id="c-photos">0 PHOTOS</span><span id="c-bets">0 BETS</span></div>
+</header>
+
+<main>
+  <section id="s-LOBBY" class="screen">
+    <div class="hero">NEURAL DERBY</div>
+    <div class="sub">SEVEN BRAINS. YOUR PHOTOS. ONE WINNER.</div>
+    <div class="blink">PRESS SPACE TO OPEN THE PADDOCK</div>
+  </section>
+
+  <section id="s-PADDOCK" class="screen">
+    <div class="paddock">
+      <div class="qr-box">
+        <div class="label">SCAN. PICK AN OBJECT.<br>SHOOT IT.</div>
+        <img id="qr" alt="QR code to join">
+        <div class="url" id="join-url">...</div>
+        <div class="big" id="photo-count">0 / 120</div>
+        <div class="blink" id="paddock-hint">WAITING FOR THE FIRST PHOTO</div>
+      </div>
+      <div class="wall" id="wall"></div>
+    </div>
+  </section>
+
+  <section id="s-MULTIPLY" class="screen">
+    <div class="wall big-wall" id="aug-wall"></div>
+    <div class="caption" id="aug-caption">MULTIPLYING...</div>
+  </section>
+
+  <section id="s-HORSES" class="screen">
+    <div class="blink top-banner" id="bets-banner">PLACE YOUR BETS</div>
+    <div class="cards" id="cards"></div>
+  </section>
+
+  <section id="s-DERBY" class="screen">
+    <div class="derby">
+      <div class="track-wrap"><canvas id="track" width="1372" height="786"></canvas></div>
+      <div class="tote"><div class="tote-title">TOTE</div><div class="lap" id="lap">LAP 0 / 20</div><ol id="tote"></ol></div>
+    </div>
+    <div class="ticker" id="ticker"></div>
+  </section>
+
+  <section id="s-SPRINT" class="screen">
+    <div class="blink sprint-wait" id="sprint-wait">TIMING EVERY BRAIN ON A PHONE...</div>
+    <div class="sprint">
+      <div class="bars" id="bars"></div>
+      <div class="podium" id="podium"></div>
+    </div>
+    <div class="winners" id="winners"></div>
+  </section>
+
+  <section id="s-VERDICT" class="screen">
+    <div class="verdict" id="verdict"></div>
+    <div class="hint" id="verdict-hint">LEFT / RIGHT TO PAGE THROUGH THE HORSES</div>
+  </section>
+
+  <section id="s-SHIP" class="screen">
+    <div class="ship">
+      <div class="qr-box">
+        <div class="label">THE CHAMPION IS ON YOUR PHONE</div>
+        <img id="qr2" alt="QR code to join">
+        <div class="url" id="join-url2">...</div>
+      </div>
+      <div class="ship-right">
+        <div class="hero small" id="ship-champ">...</div>
+        <div class="sub">POINT YOUR PHONE AT YOUR DESK</div>
+        <div class="veteran" id="veteran"></div>
+      </div>
+    </div>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+<script src="sprites.js"></script>
+<script src="audio.js"></script>
+<script src="stadium.js"></script>
+</body>
+</html>
