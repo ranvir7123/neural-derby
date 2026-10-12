@@ -1,7 +1,7 @@
 """Make a self-signed certificate so the TEAM phone can use live video (browsers need HTTPS for the camera).
 
 Usage: python tools/make_cert.py            (writes data/cert.pem and data/key.pem)
-On the team phone, open https://<laptop ip>:8443/phone/?team=1 once and accept the warning.
+On the team phone, open the team link printed by GET /api/team-url on the laptop once and accept the warning.
 """
 import datetime
 import ipaddress
@@ -28,6 +28,7 @@ def main():
             .not_valid_after(now + datetime.timedelta(days=365))
             .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address(ip))]), critical=False)
             .sign(key, hashes.SHA256()))
+    config.DATA_DIR.mkdir(parents=True, exist_ok=True)
     (config.DATA_DIR / "key.pem").write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.TraditionalOpenSSL, serialization.NoEncryption()))
     (config.DATA_DIR / "cert.pem").write_bytes(cert.public_bytes(serialization.Encoding.PEM))
     print(f"wrote data/cert.pem and data/key.pem for {ip} and localhost")

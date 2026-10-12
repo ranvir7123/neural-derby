@@ -13,7 +13,7 @@ async def serve():
     cert, key = config.DATA_DIR / "cert.pem", config.DATA_DIR / "key.pem"
     if cert.exists() and key.exists():
         servers.append(uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=config.PORTS["https"], log_level="info",
-                                                     ssl_certfile=str(cert), ssl_keyfile=str(key))))
+                                                     lifespan="off", ssl_certfile=str(cert), ssl_keyfile=str(key))))
     else:
         print("no data/cert.pem: HTTPS listener off (team phone live video unavailable). Run tools/make_cert.py.")
     await asyncio.gather(*(s.serve() for s in servers))

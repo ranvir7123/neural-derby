@@ -67,6 +67,11 @@ def test_bets_only_in_horses_act(client: TestClient):
     assert client.get("/api/state").json()["act"] == "HORSES"
     assert client.post("/api/bet", json={"device": "dev_0001", "horse": "textbook"}).status_code == 200
     assert client.post("/api/bet", json={"device": "dev_0001", "horse": "unicorn"}).status_code == 400
+    import time
+    for _ in range(200):                              # the data loads in the background; let it finish before the test ends
+        if client.get("/api/state").json()["data_loaded"]:
+            break
+        time.sleep(0.05)
 
 
 def test_full_run_broadcasts_lap_events_and_finishes(client: TestClient):
