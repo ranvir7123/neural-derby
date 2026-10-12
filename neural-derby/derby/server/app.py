@@ -1,6 +1,7 @@
 """The one server: routes for phones and the operator, the websocket hub, and the race thread."""
 import asyncio
 import json
+import logging
 import shutil
 import socket
 import threading
@@ -27,6 +28,8 @@ from derby.race import recorder, scoring
 from derby.race.trainer import LapEvent, Race
 from derby.server.hub import Hub
 from derby.server.show import Act, GateError, Show
+
+log = logging.getLogger("derby")
 
 
 @dataclass
@@ -289,15 +292,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             x = state.backup.x[:: max(1, len(state.backup.x) // 48)][:48]
         else:
             x = torch.zeros(0, 3, config.IMG, config.IMG, dtype=torch.uint8)
-        pairs = augment.preview_pairs(x, n=48, seed=settings.seed)
+        pairs = augment.preview_pairs(x, n=48, seed=settings.seed) if x.shape[0] else []   # nothing to show yet
         await state.hub.broadcast({"type": "previews", "pairs": pairs, "n_before": state.live.count(),
                                    "n_after": state.live.count() * 10})
 
     def load_data():
-        train, test = state.live.split_by_device(settings.seed)
-        live_tr = LiveStore.tensors(train) if train else None
-        live_te = LiveStore.tensors(test) if test else None
-        state.data = dataset.assemble(state.backup, live_tr, live_te, settings.seed, device=state.device)
+        # Runs in a worker thread. A failure must reach the pages, or DERBY stays locked with no reason given.
+        try:
+            train, test = state.live.split_by_device(settings.seed)
+            live_tr = LiveStore.tensors(train) if train else None
+            live_te = LiveStore.tensors(test) if test else None
+            state.data = dataset.assemble(state.backup, live_tr, live_te, settings.seed, device=state.device)
+        except Exception as e:
+            log.exception("loading the race data failed")
+            state.hub.broadcast_threadsafe(state.loop, {"type": "error", "where": "load", "message": str(e)})
+            return
         state.show.data_loaded = True
         state.hub.broadcast_threadsafe(state.loop, {"type": "state", **state_payload(state)})
 
@@ -310,18 +319,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         threading.Thread(target=run_events, args=(state.race.run(), True), daemon=True).start()
 
     def run_events(event_iter, export_after: bool = False):
-        for ev in event_iter:
-            state.events.append(ev)
-            state.race_standings = scoring.race_standings(state.events)
-            lines = state.caller.on_event(ev) if state.caller else []
-            state.hub.broadcast_threadsafe(state.loop, {
-                "type": "lap", "event": ev.to_dict(), "lines": lines,
-                "standings": [s.to_dict() for s in state.race_standings],
-            })
-        if export_after and state.race is not None:
-            models_dir = settings.data_dir / "models"
-            for key, model in state.race.models.items():
-                state.model_paths[key] = export_onnx(model, models_dir / f"{key}.onnx")
+        # Runs in a worker thread. A failure (training or export) is reported, and race_done is not sent.
+        try:
+            for ev in event_iter:
+                state.events.append(ev)
+                state.race_standings = scoring.race_standings(state.events)
+                lines = state.caller.on_event(ev) if state.caller else []
+                state.hub.broadcast_threadsafe(state.loop, {
+                    "type": "lap", "event": ev.to_dict(), "lines": lines,
+                    "standings": [s.to_dict() for s in state.race_standings],
+                })
+            if export_after and state.race is not None:
+                models_dir = settings.data_dir / "models"
+                for key, model in state.race.models.items():
+                    state.model_paths[key] = export_onnx(model, models_dir / f"{key}.onnx")
+        except Exception as e:
+            log.exception("the race thread failed")
+            state.hub.broadcast_threadsafe(state.loop, {"type": "error", "where": "race", "message": str(e)})
+            return
         state.hub.broadcast_threadsafe(state.loop, {
             "type": "race_done", "standings": [s.to_dict() for s in state.race_standings],
             "models": [{"key": k, "url": f"/models/{k}.onnx"} for k in state.model_paths],

@@ -90,3 +90,21 @@ def test_full_run_broadcasts_lap_events_and_finishes(client: TestClient):
         assert seen == ["textbook", "featherweight"]
         assert client.get("/api/state").json()["act"] == "DERBY"
         assert client.get("/models/textbook.onnx").status_code == 200
+
+
+def test_load_failure_is_reported_not_silent(tmp_path: Path):
+    # no backup is set, so dataset.assemble fails inside the loader thread
+    settings = Settings(data_dir=tmp_path, laps=1, batch=16, lap_floor_s=0.0, seed=1,
+                        enabled=TWO, load_backup=False, device="cpu")
+    with TestClient(create_app(settings)) as c:
+        with c.websocket_connect("/ws?role=stadium") as ws:
+            assert ws.receive_json()["type"] == "state"
+            for _ in range(3):
+                assert c.post("/api/advance").status_code == 200   # PADDOCK, MULTIPLY, HORSES
+            msg = ws.receive_json()
+            while msg["type"] != "error":
+                msg = ws.receive_json()
+            assert msg["where"] == "load"
+            assert c.get("/api/state").json()["data_loaded"] is False
+            r = c.post("/api/advance")                             # DERBY stays locked
+            assert r.status_code == 400 and "loading" in r.json()["error"]
