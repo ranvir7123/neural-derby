@@ -51,3 +51,10 @@ def test_horse_stats_bundle():
     s = stats.horse_stats(stable.by_key("textbook"))
     assert set(s) == {"params", "macs", "depth", "table"}
     assert s["params"] > 0 and s["macs"] > 0 and s["depth"] == 4
+
+
+def test_layer_table_lists_each_weight_layer_once():
+    m = stable.build_spotlight()
+    rows = stats.layer_table(m)
+    names = [r["layer"] for r in rows]
+    assert len(names) == len(set(names)) == stats.depth(m)

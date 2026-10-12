@@ -60,12 +60,21 @@ def depth(m: nn.Module) -> int:
 
 
 def layer_table(m: nn.Module, img: int = config.IMG) -> list[dict]:
-    """One row per weight layer, in forward order: layer name, type, output shape (no batch), params."""
+    """One row per weight layer, in forward order: layer name, type, output shape (no batch), params.
+
+    A layer that runs more than once in a forward pass (ChannelAttention.score runs twice) gets one row,
+    from its first run, so its params are not counted twice. Layers without conv or linear weights
+    (BatchNorm and so on) have no row, so the rows add up to a little less than count_params.
+    """
     rows: list[dict] = []
+    seen: set[str] = set()
     hooks = []
 
     def make_hook(name):
         def hook(mod, _inp, out):
+            if name in seen:
+                return
+            seen.add(name)
             rows.append({
                 "layer": name,
                 "type": type(mod).__name__,

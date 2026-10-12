@@ -35,3 +35,11 @@ def test_every_horse_has_card_text():
         assert h.name.isupper() or h.name.startswith("THE ")
         assert len(h.tagline) > 20
         assert h.colour.startswith("#") and len(h.colour) == 7
+
+
+def test_numbered_taglines_match_measured_stats():
+    from derby.horses import stats
+    floors = stats.depth(stable.build_stairs()) - 1          # minus the linear head
+    assert f"{floors} floors deep" in stable.by_key("stairs").tagline
+    ratio = stats.count_macs(stable.build_textbook()) / stats.count_macs(stable.build_featherweight())
+    assert f"{round(ratio * 2) / 2:g} times fewer" in stable.by_key("featherweight").tagline
