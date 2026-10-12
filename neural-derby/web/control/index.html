@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Derby control</title>
+<style>
+  body { font-family: Consolas, monospace; background: #111; color: #eee; padding: 16px; font-size: 14px; margin: 0; }
+  h3 { margin: 0 0 12px; }
+  .urls div { margin: 4px 0; overflow-wrap: anywhere; }
+  .urls b { color: #ffb000; }
+  #conn { display: inline-block; padding: 2px 8px; background: #a00; color: #fff; margin-bottom: 8px; }
+  #conn.ok { background: #0a4; }
+  button { font: inherit; padding: 10px 14px; margin: 4px 6px 4px 0; background: #333; color: #fff; border: 1px solid #666; cursor: pointer; }
+  button.warn { background: #622; }
+  input { font: inherit; padding: 9px 10px; margin: 4px 6px 4px 0; background: #000; color: #eee; border: 1px solid #666; width: 260px; max-width: 100%; }
+  pre { background: #000; padding: 10px; overflow-x: auto; max-height: 40vh; }
+  #error { display: none; background: #a00; color: #fff; padding: 10px; margin: 8px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  #log div { border-bottom: 1px solid #333; padding: 4px 0; overflow-wrap: anywhere; }
+  #log div.bad, #answer.bad { color: #ff8080; }
+  #answer { margin: 6px 0; min-height: 1.4em; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<h3>Neural Derby control</h3>
+<div id="conn">connecting...</div>
+<div class="urls">
+  <div>Join URL: <b id="url">...</b></div>
+  <div>Team phone URL: <b id="team-url">...</b></div>
+</div>
+<div id="error"></div>
+<pre id="state">connecting...</pre>
+<div>
+  <button id="advance">Advance (Space)</button>
+  <button id="gate">Close gate (G)</button>
+  <button id="laptop" class="warn">Laptop Sprint timing (L)</button>
+  <button id="veteran">Run the Veteran</button>
+</div>
+<div>
+  <input id="race-name" placeholder="race file, blank = latest" autocomplete="off">
+  <button id="replay" class="warn">Replay race (R)</button>
+</div>
+<div id="answer"></div>
+<h4>Events</h4>
+<div id="log"></div>
+<script>
+  const $ = (id) => document.getElementById(id);
+  // Every line is set with textContent: nicknames and classes typed on phones are never run as HTML.
+  function log(t, bad) { const d = document.createElement("div"); d.textContent = new Date().toLocaleTimeString() + " " + t; if (bad) d.className = "bad"; $("log").prepend(d); }
+  // Shows the server's answer, good or bad, so a refused button never fails silently. The newest answer
+  // also stays next to the buttons, because race laps would push it down the event log out of sight.
+  function answer(text, bad) { log(text, bad); $("answer").textContent = "Last answer: " + text; $("answer").className = bad ? "bad" : ""; }
+  async function post(u, b) {
+    let status = 0, text = "";
+    try { const r = await fetch(u, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b || {}) }); status = r.status; text = await r.text(); }
+    catch (e) { answer(`${u} -> no connection to the server`, true); return; }
+    let shown = text;
+    try { const j = JSON.parse(text); shown = j.error || (typeof j.detail === "string" ? j.detail : "") || JSON.stringify(j); } catch (e) { /* not JSON: show the raw text */ }
+    answer(`${u} -> ${status} ${shown}`, status >= 400);
+  }
+  async function getUrl(u, el) {
+    try { const r = await fetch(u); const j = await r.json(); $(el).textContent = j.url || j.error || JSON.stringify(j); }
+    catch (e) { $(el).textContent = "could not reach the server"; }
+  }
+  // Fetched on every (re)connect: a restarted server makes a new team token, so the old link would be wrong.
+  function loadUrls() { getUrl("/api/join-url", "url"); getUrl("/api/team-url", "team-url"); }
+  $("advance").onclick = () => post("/api/advance"); $("gate").onclick = () => post("/api/gate/close");
+  $("laptop").onclick = () => post("/api/sprint/laptop"); $("veteran").onclick = () => post("/api/veteran", {});
+  $("replay").onclick = () => { const name = $("race-name").value.trim(); post("/api/replay", name ? { name } : {}); };
+
+  const pct = (f) => f == null ? "--" : Math.round(f * 100) + "%";
+  function onError(m) {
+    const text = `${m.where === "race" ? "THE RACE" : "LOADING THE PHOTOS"} FAILED: ${m.message}`;
+    $("error").textContent = text + "\nReplay the last race, or restart the server."; $("error").style.display = "block"; log(text, true);
+  }
+  function describe(m) {
+    if (m.type === "lap") return `lap ${m.event.lap} ${m.event.horse} ${pct(m.event.test_acc)}`;
+    if (m.type === "photo") return `photo ${m.class} from ${m.nick} (${m.count} total)`;
+    return m.type;
+  }
+  function connect() {
+    const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws?role=control`);
+    ws.onopen = () => { $("conn").textContent = "connected"; $("conn").className = "ok"; loadUrls(); };
+    ws.onmessage = (ev) => { const m = JSON.parse(ev.data);
+      if (m.type === "state") { $("state").textContent = JSON.stringify(m, null, 1); }
+      else if (m.type === "error") onError(m);
+      else { if (m.type === "lap") $("error").style.display = "none"; log(describe(m)); } };   // laps again: the failure is behind us
+    ws.onclose = () => { $("conn").textContent = "reconnecting..."; $("conn").className = ""; setTimeout(connect, 2000); };
+  }
+  connect();
+</script>
+</body>
+</html>

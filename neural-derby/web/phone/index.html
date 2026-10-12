@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Neural Derby</title>
+<link rel="stylesheet" href="phone.css">
+</head>
+<body>
+<header><span>NEURAL</span> DERBY</header>
+<div class="banner" id="banner">CONNECTING...</div>
+
+<section id="p-join" class="screen on">
+  <h2>YOUR NAME</h2>
+  <input id="nick" maxlength="12" placeholder="12 letters max" autocomplete="off">
+  <button id="join-btn" class="big">JOIN THE ROOM</button>
+</section>
+
+<section id="p-wait" class="screen">
+  <h2 id="wait-title">HOLD ON</h2>
+  <p id="wait-text">The paddock opens soon. Look at the big screen.</p>
+</section>
+
+<section id="p-capture" class="screen">
+  <h2>PICK WHAT YOU WILL SHOOT</h2>
+  <div class="grid" id="class-grid"></div>
+  <input type="file" id="shot" accept="image/*" capture="environment" hidden>
+  <div id="preview-box" hidden>
+    <img id="preview" alt="your photo">
+    <div class="row"><button id="retake">RETAKE</button><button id="send" class="big">SEND</button></div>
+  </div>
+  <p class="small" id="sent-count">0 of 3 sent</p>
+</section>
+
+<section id="p-bet" class="screen">
+  <h2>PLACE YOUR BET</h2>
+  <div id="bet-list"></div>
+</section>
+
+<section id="p-race" class="screen">
+  <h2 id="race-title">LAP 0</h2>
+  <ol id="mini"></ol>
+  <p class="small" id="your-horse"></p>
+</section>
+
+<section id="p-result" class="screen">
+  <h2 id="result-title">...</h2>
+  <p id="result-text"></p>
+</section>
+
+<section id="p-ship" class="screen">
+  <h2 id="ship-title">THE CHAMPION IS HERE</h2>
+  <p class="small" id="ship-status">downloading the model...</p>
+  <input type="file" id="shot2" accept="image/*" capture="environment" hidden>
+  <button id="classify-btn" class="big" disabled>POINT AT YOUR DESK</button>
+  <video id="cam" playsinline muted hidden></video>
+  <canvas id="work" width="96" height="96" hidden></canvas>
+  <div id="bars"></div>
+  <p class="small" id="infer-ms"></p>
+</section>
+
+<script src="/vendor/onnxruntime-web/ort.min.js"></script>
+<script src="phone.js"></script>
+</body>
+</html>
