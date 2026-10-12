@@ -9,6 +9,7 @@ from PIL import Image
 
 from derby import config
 from derby.data.backup import Loaded
+from derby.race import recorder
 from derby.server.app import Settings, create_app
 
 # only two horses, so the CPU race in the tests stays fast; missing keys would default to enabled
@@ -29,7 +30,7 @@ def fake_backup(n=48):
 @pytest.fixture
 def client(tmp_path: Path):
     settings = Settings(data_dir=tmp_path, laps=1, batch=16, lap_floor_s=0.0, seed=1,
-                        enabled=TWO, load_backup=False, device="cpu")
+                        enabled=TWO, load_backup=False, device="cpu", local_only_ops=False, team_token="tok")
     app = create_app(settings)
     app.state.derby.backup = fake_backup()
     with TestClient(app) as c:
@@ -95,7 +96,7 @@ def test_full_run_broadcasts_lap_events_and_finishes(client: TestClient):
 def test_load_failure_is_reported_not_silent(tmp_path: Path):
     # no backup is set, so dataset.assemble fails inside the loader thread
     settings = Settings(data_dir=tmp_path, laps=1, batch=16, lap_floor_s=0.0, seed=1,
-                        enabled=TWO, load_backup=False, device="cpu")
+                        enabled=TWO, load_backup=False, device="cpu", local_only_ops=False)
     with TestClient(create_app(settings)) as c:
         with c.websocket_connect("/ws?role=stadium") as ws:
             assert ws.receive_json()["type"] == "state"
@@ -108,3 +109,47 @@ def test_load_failure_is_reported_not_silent(tmp_path: Path):
             assert c.get("/api/state").json()["data_loaded"] is False
             r = c.post("/api/advance")                             # DERBY stays locked
             assert r.status_code == 400 and "loading" in r.json()["error"]
+
+
+def test_operator_endpoints_refuse_phones_when_local_only(tmp_path: Path):
+    settings = Settings(data_dir=tmp_path, laps=1, batch=16, lap_floor_s=0.0, seed=1,
+                        enabled=TWO, load_backup=False, device="cpu")          # local_only_ops is on by default
+    app = create_app(settings)
+    with TestClient(app, client=("10.0.0.5", 1234)) as phone:
+        r = phone.post("/api/advance")
+        assert r.status_code == 403 and "laptop" in r.json()["error"]
+        assert phone.get("/api/team-url").status_code == 403
+    with TestClient(app, client=("127.0.0.1", 50000)) as laptop:
+        assert laptop.post("/api/advance").status_code == 200
+
+
+def test_replay_rejects_paths_outside_the_races_folder(client: TestClient, tmp_path: Path):
+    assert client.post("/api/replay", json={}).status_code == 400            # nothing recorded yet
+    outside = tmp_path / "outside.json"
+    outside.write_text("{}", encoding="utf-8")
+    for body in ({"name": "../../pytest.ini"}, {"name": "C:/Windows/win.ini"},
+                 {"name": "../outside.json"}, {"path": str(outside)}):
+        assert client.post("/api/replay", json=body).status_code == 400, body
+    recorder.write_race(tmp_path / "races" / "r1.json", [], [], [], [], {}, {})
+    with client.websocket_connect("/ws?role=stadium") as ws:
+        ws.receive_json()
+        r = client.post("/api/replay", json={"name": "r1.json"})
+        assert r.status_code == 200 and r.json() == {"ok": True, "name": "r1.json"}   # never the full path
+        while ws.receive_json()["type"] != "race_done":                      # let the replay thread finish
+            pass
+
+
+def test_team_role_and_sprint_results_need_the_token(client: TestClient):
+    r = client.post("/api/sprint-result", json={"horse": "textbook", "ms": 5, "token": "wrong"})
+    assert r.status_code == 403
+    r = client.post("/api/sprint-result", json={"horse": "textbook", "ms": 5, "token": "tok"})
+    assert r.status_code == 400                                              # right token, but no race yet
+    assert "team=tok" in client.get("/api/team-url").json()["url"]
+    hub = client.app.state.derby.hub
+    with client.websocket_connect("/ws?role=team&token=wrong") as ws:
+        ws.receive_json()
+        assert client.get("/api/state").json()["phones"] == 1               # downgraded to a phone
+        assert hub.count("team") == 0
+        with client.websocket_connect("/ws?role=team&token=tok") as team:
+            team.receive_json()
+            assert hub.count("team") == 1

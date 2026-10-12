@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import secrets
 import shutil
 import socket
 import threading
@@ -44,6 +45,8 @@ class Settings:
     load_backup: bool = True
     device: str | None = None     # None = cuda if available else cpu
     public_url: str | None = None  # what the QR points at; None = detect LAN ip
+    local_only_ops: bool = True    # operator controls answer only the laptop itself
+    team_token: str | None = None  # secret in the team phone link; None = make a new one at start
 
 
 @dataclass
@@ -71,6 +74,7 @@ class AppState:
     verdicts: dict = field(default_factory=dict)
     model_paths: dict = field(default_factory=dict)
     form_guide: dict = field(default_factory=dict)
+    team_token: str = ""
     loop: asyncio.AbstractEventLoop | None = None
 
     @property
@@ -120,6 +124,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     fg_path = settings.data_dir / "form_guide.json"
     if fg_path.exists():
         state.form_guide = json.loads(fg_path.read_text(encoding="utf-8"))
+    # An empty token would let any phone claim the team role, so treat "" like None.
+    state.team_token = settings.team_token or secrets.token_urlsafe(6)
+
+    def operator_allowed(request: Request) -> bool:
+        """Operator controls (advance, gates, Sprint on the laptop, replay) only answer the laptop itself."""
+        if not settings.local_only_ops or request.client is None:
+            return True
+        return request.client.host in {"127.0.0.1", "::1", "localhost"}
+
+    def operator_refused() -> JSONResponse:
+        return JSONResponse({"error": "Operator controls only work on the laptop."}, status_code=403)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -161,7 +176,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return state_payload(state)
 
     @app.post("/api/advance")
-    async def advance():
+    async def advance(request: Request):
+        if not operator_allowed(request):
+            return operator_refused()
         try:
             act = state.show.advance()
         except GateError as e:
@@ -184,7 +201,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"act": act.value}
 
     @app.post("/api/gate/close")
-    async def close_gate():
+    async def close_gate(request: Request):
+        if not operator_allowed(request):
+            return operator_refused()
         state.show.close_gate()
         await push_state()
         return {"ok": True}
@@ -227,6 +246,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/sprint-result")
     async def sprint_result(body: dict):
+        if str(body.get("token", "")) != state.team_token:
+            return JSONResponse({"error": "Only the team phone can send Sprint times."}, status_code=403)
         if not state.model_paths or not state.race_standings:
             return JSONResponse({"error": "Run the race first."}, status_code=400)
         horse, ms = str(body.get("horse", "")), float(body.get("ms", 0))
@@ -238,7 +259,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"ok": True, "have": len(state.sprint_ms)}
 
     @app.post("/api/sprint/laptop")
-    async def sprint_laptop():
+    async def sprint_laptop(request: Request):
+        if not operator_allowed(request):
+            return operator_refused()
         if not state.model_paths or not state.race_standings:
             return JSONResponse({"error": "Run the race first."}, status_code=400)
         for k, p in state.model_paths.items():
@@ -248,14 +271,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"ok": True}
 
     @app.post("/api/replay")
-    async def replay(body: dict | None = None):
-        path = Path((body or {}).get("path") or (recorder.latest_race(settings.data_dir / "races") or ""))
-        if not path.is_file():
+    async def replay(request: Request, body: dict | None = None):
+        """Replay a recorded race. Only a plain file name inside the races folder is accepted,
+        never a path, so a request cannot reach any other file on the laptop. No name = the latest race."""
+        if not operator_allowed(request):
+            return operator_refused()
+        races_dir = settings.data_dir / "races"
+        name = Path(str((body or {}).get("name") or "")).name
+        path = races_dir / name if name else recorder.latest_race(races_dir)
+        if (path is None or path.suffix != ".json" or path.resolve().parent != races_dir.resolve()
+                or not path.is_file()):
             return JSONResponse({"error": "No recorded race to replay."}, status_code=400)
         state.events.clear()
         state.caller = Caller([h.key for h in state.stable], state.names, settings.laps, seed=settings.seed)
         threading.Thread(target=run_events, args=(recorder.replay(path),), daemon=True).start()
-        return {"ok": True, "path": str(path)}
+        return {"ok": True, "name": path.name}
+
+    @app.get("/api/team-url")
+    def team_url(request: Request):
+        """The link for the team phone that runs the Sprint. It carries the secret team token."""
+        if not operator_allowed(request):
+            return operator_refused()
+        url = f"https://{lan_ip()}:{config.PORTS['https']}/phone/?team={state.team_token}"
+        return {"url": url, "token": state.team_token}
 
     @app.get("/models/{key}.onnx")
     def model_file(key: str):
@@ -268,7 +306,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # ---------- websocket ----------
     @app.websocket("/ws")
-    async def ws_endpoint(ws: WebSocket, role: str = "phone"):
+    async def ws_endpoint(ws: WebSocket, role: str = "phone", token: str = ""):
+        if role == "team" and token != state.team_token:
+            role = "phone"   # a wrong or missing token makes it an ordinary phone, quietly
         await state.hub.connect(ws, role)
         try:
             await ws.send_text(json.dumps({"type": "state", **state_payload(state)}))
@@ -305,7 +345,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             state.data = dataset.assemble(state.backup, live_tr, live_te, settings.seed, device=state.device)
         except Exception as e:
             log.exception("loading the race data failed")
-            state.hub.broadcast_threadsafe(state.loop, {"type": "error", "where": "load", "message": str(e)})
+            state.hub.broadcast_threadsafe(state.loop, {"type": "error", "where": "load", "message": str(e)},
+                                           roles={"stadium", "control"})   # raw error text is for the operator only
             return
         state.show.data_loaded = True
         state.hub.broadcast_threadsafe(state.loop, {"type": "state", **state_payload(state)})
@@ -335,7 +376,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     state.model_paths[key] = export_onnx(model, models_dir / f"{key}.onnx")
         except Exception as e:
             log.exception("the race thread failed")
-            state.hub.broadcast_threadsafe(state.loop, {"type": "error", "where": "race", "message": str(e)})
+            state.hub.broadcast_threadsafe(state.loop, {"type": "error", "where": "race", "message": str(e)},
+                                           roles={"stadium", "control"})   # raw error text is for the operator only
             return
         state.hub.broadcast_threadsafe(state.loop, {
             "type": "race_done", "standings": [s.to_dict() for s in state.race_standings],
