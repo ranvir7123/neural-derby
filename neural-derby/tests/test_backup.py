@@ -39,3 +39,25 @@ def test_split_is_deterministic_and_disjoint():
     assert torch.equal(a_train, b_train) and torch.equal(a_test, b_test)
     assert len(a_test) == 15 and len(a_train) == 85
     assert set(a_train.tolist()).isdisjoint(a_test.tolist())
+
+
+def test_group_key_strips_the_box_index():
+    assert backup.group_key(Path("coco_123_1.jpg")) == "coco_123"
+    assert backup.group_key(Path("oi_test_abc_0.jpg")) == "oi_test_abc"
+    assert backup.group_key(Path("0007.jpg")) == "0007"
+
+
+def test_split_by_group_keeps_a_photo_on_one_side(tiny_backup: Path):
+    groups = [f"coco_{i // 2}" for i in range(100)]  # 50 photos, 2 crops each
+    a_train, a_test = backup.split_by_group(groups, seed=7, test_frac=0.15)
+    b_train, b_test = backup.split_by_group(groups, seed=7, test_frac=0.15)
+    assert torch.equal(a_train, b_train) and torch.equal(a_test, b_test)
+    assert set(a_train.tolist()).isdisjoint(a_test.tolist())
+    assert set(a_train.tolist()) | set(a_test.tolist()) == set(range(100))
+    assert len(a_test) >= 15
+    side = {i: "train" for i in a_train.tolist()} | {i: "test" for i in a_test.tolist()}
+    sides_of = {}
+    for i, g in enumerate(groups):
+        sides_of.setdefault(g, set()).add(side[i])
+    assert all(len(s) == 1 for s in sides_of.values())
+    assert len(backup.load(tiny_backup, img=32).groups) == 12
