@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import math
 import secrets
 import shutil
 import socket
@@ -31,6 +32,22 @@ from derby.server.hub import Hub
 from derby.server.show import Act, GateError, Show
 
 log = logging.getLogger("derby")
+
+# One-off messages that a page connecting late (or reconnecting) still needs, by act, in sending order.
+RESEND_BY_ACT = {
+    Act.MULTIPLY: ("previews",),
+    Act.DERBY: ("race_done",),
+    Act.SPRINT: ("race_done", "sprint_request", "sprint"),
+    Act.VERDICT: ("sprint", "verdict"),
+    Act.SHIP: ("sprint", "verdict", "ship", "veteran"),
+}
+# The ones that belong to a single race: a new race or a replay forgets them.
+RACE_MESSAGES = ("race_done", "sprint_request", "sprint", "verdict", "ship", "veteran")
+
+
+def finite_or_none(d: dict) -> dict:
+    """JSON has no NaN or infinity, and the browser's JSON.parse rejects them, so send null instead."""
+    return {k: None if isinstance(v, float) and not math.isfinite(v) else v for k, v in d.items()}
 
 
 @dataclass
@@ -75,6 +92,9 @@ class AppState:
     model_paths: dict = field(default_factory=dict)
     form_guide: dict = field(default_factory=dict)
     team_token: str = ""
+    race_running: bool = False     # a race or replay thread is still sending laps
+    sprint_done: bool = False      # the Sprint is decided; late times are refused
+    last: dict = field(default_factory=dict)   # newest one-off message of each type, with its roles
     loop: asyncio.AbstractEventLoop | None = None
 
     @property
@@ -149,6 +169,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def push_state():
         await state.hub.broadcast({"type": "state", **state_payload(state)})
 
+    async def send_and_remember(msg: dict, roles: set[str] | None = None) -> None:
+        """Send a one-off message and keep it, so a page that connects later still gets it."""
+        state.last[msg["type"]] = (msg, roles)
+        await state.hub.broadcast(msg, roles)
+
+    def forget_race() -> None:
+        """A new race or a replay starts clean: no Sprint times, no decided Sprint, no old race messages."""
+        state.sprint_ms.clear()
+        state.sprint_done = False
+        for kind in RACE_MESSAGES:
+            state.last.pop(kind, None)
+
     # ---------- pages ----------
     if (settings.web_dir / "stadium").is_dir():
         app.mount("/stadium", StaticFiles(directory=settings.web_dir / "stadium", html=True), name="stadium")
@@ -179,6 +211,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def advance(request: Request):
         if not operator_allowed(request):
             return operator_refused()
+        if state.show.act == Act.DERBY and state.race_running:
+            return JSONResponse({"error": "The race is still running. Wait for the checkered flag."}, status_code=400)
         try:
             act = state.show.advance()
         except GateError as e:
@@ -193,7 +227,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             start_race()
         elif act == Act.SPRINT:
             models = [{"key": k, "url": f"/models/{k}.onnx"} for k in state.model_paths]
-            await state.hub.broadcast({"type": "sprint_request", "models": models}, roles={"team", "control"})
+            await send_and_remember({"type": "sprint_request", "models": models}, roles={"team", "control"})
         elif act == Act.VERDICT:
             await finish_verdict()
         elif act == Act.SHIP:
@@ -248,9 +282,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def sprint_result(body: dict):
         if str(body.get("token", "")) != state.team_token:
             return JSONResponse({"error": "Only the team phone can send Sprint times."}, status_code=403)
+        if state.show.act != Act.SPRINT:
+            return JSONResponse({"error": "The Sprint is not running."}, status_code=400)
+        if state.sprint_done:
+            return JSONResponse({"error": "The Sprint is already decided."}, status_code=400)
         if not state.model_paths or not state.race_standings:
             return JSONResponse({"error": "Run the race first."}, status_code=400)
-        horse, ms = str(body.get("horse", "")), float(body.get("ms", 0))
+        try:
+            ms = float(body.get("ms", 0))
+        except (TypeError, ValueError, OverflowError):   # null, text, or a number too big for a float
+            ms = math.nan
+        if not math.isfinite(ms):
+            return JSONResponse({"error": "Bad timing value."}, status_code=400)
+        horse = str(body.get("horse", ""))
         if horse in state.model_paths and ms > 0:
             state.sprint_ms[horse] = ms
             state.sprint_device = str(body.get("device", "phone"))
@@ -262,6 +306,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def sprint_laptop(request: Request):
         if not operator_allowed(request):
             return operator_refused()
+        if state.sprint_done:
+            return JSONResponse({"error": "The Sprint is already decided."}, status_code=400)
         if not state.model_paths or not state.race_standings:
             return JSONResponse({"error": "Run the race first."}, status_code=400)
         for k, p in state.model_paths.items():
@@ -276,6 +322,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         never a path, so a request cannot reach any other file on the laptop. No name = the latest race."""
         if not operator_allowed(request):
             return operator_refused()
+        if state.race_running:
+            return JSONResponse({"error": "A race is already running."}, status_code=400)
         races_dir = settings.data_dir / "races"
         name = Path(str((body or {}).get("name") or "")).name
         path = races_dir / name if name else recorder.latest_race(races_dir)
@@ -283,7 +331,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 or not path.is_file()):
             return JSONResponse({"error": "No recorded race to replay."}, status_code=400)
         state.events.clear()
+        forget_race()
         state.caller = Caller([h.key for h in state.stable], state.names, settings.laps, seed=settings.seed)
+        state.race_running = True
         threading.Thread(target=run_events, args=(recorder.replay(path),), daemon=True).start()
         return {"ok": True, "name": path.name}
 
@@ -314,6 +364,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await ws.send_text(json.dumps({"type": "state", **state_payload(state)}))
             if state.show.act in (Act.HORSES, Act.DERBY, Act.SPRINT, Act.VERDICT, Act.SHIP):
                 await ws.send_text(json.dumps({"type": "horses", "cards": horse_cards(state)}))
+            for kind in RESEND_BY_ACT.get(state.show.act, ()):
+                kept = state.last.get(kind)
+                if kept is not None and (kept[1] is None or role in kept[1]):
+                    await ws.send_text(json.dumps(kept[0]))
             while True:
                 await ws.receive_text()   # phones only listen; keep the socket alive
         except WebSocketDisconnect:
@@ -333,8 +387,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         else:
             x = torch.zeros(0, 3, config.IMG, config.IMG, dtype=torch.uint8)
         pairs = augment.preview_pairs(x, n=48, seed=settings.seed) if x.shape[0] else []   # nothing to show yet
-        await state.hub.broadcast({"type": "previews", "pairs": pairs, "n_before": state.live.count(),
-                                   "n_after": state.live.count() * 10})
+        await send_and_remember({"type": "previews", "pairs": pairs, "n_before": state.live.count(),
+                                 "n_after": state.live.count() * 10}, roles={"stadium", "control"})
 
     def load_data():
         # Runs in a worker thread. A failure must reach the pages, or DERBY stays locked with no reason given.
@@ -353,42 +407,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def start_race():
         state.events.clear()
-        state.sprint_ms.clear()
+        forget_race()
         state.race = Race(state.stable, state.data, laps=settings.laps, batch=settings.batch,
                           lap_floor_s=settings.lap_floor_s, seed=settings.seed, device=state.device)
         state.caller = Caller([h.key for h in state.stable], state.names, settings.laps, seed=settings.seed)
+        state.race_running = True
         threading.Thread(target=run_events, args=(state.race.run(), True), daemon=True).start()
 
     def run_events(event_iter, export_after: bool = False):
         # Runs in a worker thread. A failure (training or export) is reported, and race_done is not sent.
         try:
-            for ev in event_iter:
-                state.events.append(ev)
-                state.race_standings = scoring.race_standings(state.events)
-                lines = state.caller.on_event(ev) if state.caller else []
-                state.hub.broadcast_threadsafe(state.loop, {
-                    "type": "lap", "event": ev.to_dict(), "lines": lines,
-                    "standings": [s.to_dict() for s in state.race_standings],
-                })
-            if export_after and state.race is not None:
-                models_dir = settings.data_dir / "models"
-                for key, model in state.race.models.items():
-                    state.model_paths[key] = export_onnx(model, models_dir / f"{key}.onnx")
+            try:
+                for ev in event_iter:
+                    state.events.append(ev)
+                    state.race_standings = scoring.race_standings(state.events)
+                    lines = state.caller.on_event(ev) if state.caller else []
+                    state.hub.broadcast_threadsafe(state.loop, {
+                        "type": "lap", "event": finite_or_none(ev.to_dict()), "lines": lines,
+                        "standings": [s.to_dict() for s in state.race_standings],
+                    })
+                if export_after and state.race is not None:
+                    models_dir = settings.data_dir / "models"
+                    for key, model in state.race.models.items():
+                        state.model_paths[key] = export_onnx(model, models_dir / f"{key}.onnx")
+            finally:
+                state.race_running = False   # cleared before race_done or error goes out, so Space works on arrival
         except Exception as e:
             log.exception("the race thread failed")
             state.hub.broadcast_threadsafe(state.loop, {"type": "error", "where": "race", "message": str(e)},
                                            roles={"stadium", "control"})   # raw error text is for the operator only
             return
-        state.hub.broadcast_threadsafe(state.loop, {
+        done = {
             "type": "race_done", "standings": [s.to_dict() for s in state.race_standings],
             "models": [{"key": k, "url": f"/models/{k}.onnx"} for k in state.model_paths],
-        })
+        }
+        state.last["race_done"] = (done, None)
+        state.hub.broadcast_threadsafe(state.loop, done)
 
     async def finish_sprint():
+        state.sprint_done = True   # first, so a late phone time cannot slip in while this result is being sent
         state.sprint_standings = scoring.sprint_standings(state.sprint_ms, device=state.sprint_device)
         state.champion = scoring.champion_table(state.race_standings, state.sprint_standings)
         bets = scoring.settle_bets(state.bets, state.champion[0].horse, scoring.race_winner(state.race_standings))
-        await state.hub.broadcast({
+        await send_and_remember({
             "type": "sprint", "device": state.sprint_device,
             "sprint": [s.to_dict() for s in state.sprint_standings],
             "champion": [c.to_dict() for c in state.champion],
@@ -407,15 +468,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         recorder.write_race(settings.data_dir / "races" / f"{time.strftime('%Y%m%d-%H%M%S')}.json", state.events,
                             state.race_standings, state.sprint_standings, state.champion, state.verdicts,
                             {"seed": settings.seed, "n_train": n_train, "device": state.device})
-        await state.hub.broadcast({"type": "verdict", "verdicts": state.verdicts,
-                                   "facts": {k: f.to_dict() for k, f in state.facts.items()}})
+        await send_and_remember({"type": "verdict", "verdicts": state.verdicts,
+                                 "facts": {k: f.to_dict() for k, f in state.facts.items()}})
 
     async def ship():
         if state.champion:
             src = state.model_paths.get(state.champion[0].horse)
             if src:
                 shutil.copy(src, settings.data_dir / "models" / "champion.onnx")
-        await state.hub.broadcast({"type": "ship", "champion": state.champion[0].horse if state.champion else None,
-                                   "url": "/models/champion.onnx", "classes": config.CLASSES})
+        await send_and_remember({"type": "ship", "champion": state.champion[0].horse if state.champion else None,
+                                 "url": "/models/champion.onnx", "classes": config.CLASSES})
 
     return app
