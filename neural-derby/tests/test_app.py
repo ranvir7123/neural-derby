@@ -76,6 +76,7 @@ def test_bets_only_in_horses_act(client: TestClient):
 
 def test_full_run_broadcasts_lap_events_and_finishes(client: TestClient):
     with client.websocket_connect("/ws?role=stadium") as ws:
+        assert ws.receive_json() == {"type": "hello", "role": "stadium"}
         first = ws.receive_json()
         assert first["type"] == "state"
         for _ in range(3):
@@ -102,15 +103,15 @@ def test_full_run_broadcasts_lap_events_and_finishes(client: TestClient):
         assert client.app.state.derby.race_running is False
         # a page that connects late, or reconnects, still gets the one-off message of the current act
         with client.websocket_connect("/ws?role=stadium") as late:
-            assert [late.receive_json()["type"] for _ in range(3)] == ["state", "horses", "race_done"]
+            assert [late.receive_json()["type"] for _ in range(4)] == ["hello", "state", "horses", "race_done"]
         with client.websocket_connect("/ws?role=phone") as phone:
-            assert [phone.receive_json()["type"] for _ in range(3)] == ["state", "horses", "race_done"]
+            assert [phone.receive_json()["type"] for _ in range(4)] == ["hello", "state", "horses", "race_done"]
         assert client.post("/api/advance").json()["act"] == "SPRINT"
         with client.websocket_connect("/ws?role=team&token=tok") as team:
-            got = [team.receive_json()["type"] for _ in range(4)]
-            assert got == ["state", "horses", "race_done", "sprint_request"]
+            got = [team.receive_json()["type"] for _ in range(5)]
+            assert got == ["hello", "state", "horses", "race_done", "sprint_request"]
         with client.websocket_connect("/ws?role=phone") as phone:
-            assert [phone.receive_json()["type"] for _ in range(3)] == ["state", "horses", "race_done"]
+            assert [phone.receive_json()["type"] for _ in range(4)] == ["hello", "state", "horses", "race_done"]
             client.post("/api/join", json={"device": "dev_0002", "nick": "late"})   # sends one more state
             assert phone.receive_json()["type"] == "state"                          # no sprint_request for phones
 
@@ -121,6 +122,7 @@ def test_load_failure_is_reported_not_silent(tmp_path: Path):
                         enabled=TWO, load_backup=False, device="cpu", local_only_ops=False)
     with TestClient(create_app(settings)) as c:
         with c.websocket_connect("/ws?role=stadium") as ws:
+            assert ws.receive_json()["type"] == "hello"
             assert ws.receive_json()["type"] == "state"
             for _ in range(3):
                 assert c.post("/api/advance").status_code == 200   # PADDOCK, MULTIPLY, HORSES
@@ -175,6 +177,16 @@ def test_team_role_and_sprint_results_need_the_token(client: TestClient):
         with client.websocket_connect("/ws?role=team&token=tok") as team:
             team.receive_json()
             assert hub.count("team") == 1
+
+
+def test_first_message_says_which_role_the_server_accepted(client: TestClient):
+    # a team phone left open across a restart keeps an old token; it must be able to tell it was downgraded
+    with client.websocket_connect("/ws?role=team&token=wrong") as ws:
+        assert ws.receive_json() == {"type": "hello", "role": "phone"}
+        assert ws.receive_json()["type"] == "state"
+    with client.websocket_connect("/ws?role=team&token=tok") as ws:
+        assert ws.receive_json() == {"type": "hello", "role": "team"}
+        assert ws.receive_json()["type"] == "state"
 
 
 def strict_json(text: str):

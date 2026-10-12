@@ -1,0 +1,29 @@
+@font-face { font-family: "PS2P"; src: url("/vendor/PressStart2P-Regular.ttf") format("truetype"); }
+:root { --bg: #0b0f2a; --panel: #121a3f; --line: #2a3a80; --amber: #ffb000; --text: #f4f4f4; --dim: #8fa0ff; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: "PS2P", monospace; font-size: 12px; line-height: 1.7; }
+header { padding: 14px max(16px, calc(50% - 284px)); border-bottom: 4px solid var(--line); background: var(--panel); font-size: 16px; }
+header span { color: var(--amber); }
+.banner { position: sticky; top: 0; z-index: 1; background: #a00; color: #fff; padding: 8px max(16px, calc(50% - 284px)); font-size: 10px; }   /* stays in view: errors arrive while the SEND button or a bet row is scrolled down */
+.banner.ok { background: #0a4; }
+/* On a wide screen the content stays a 600px column; header and banner text line up with it. */
+.screen { display: none; padding: 16px; max-width: 600px; margin: 0 auto; } .screen.on { display: block; }
+h2 { font-size: 14px; color: var(--amber); margin: 8px 0 16px; }
+input[type=text], input:not([type]) { width: 100%; font: inherit; padding: 14px; background: #000; color: var(--text); border: 4px solid var(--line); margin-bottom: 16px; }
+button { font: inherit; width: 100%; padding: 16px 10px; background: var(--panel); color: var(--text); border: 4px solid var(--line); margin-bottom: 12px; }
+button.big { background: var(--amber); color: #000; border-color: var(--amber); }
+button:disabled { opacity: 0.4; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.grid button { margin: 0; font-size: 13px; min-height: 80px; }
+.grid button.sel { border-color: var(--amber); color: var(--amber); }
+#preview { width: 100%; border: 4px solid var(--line); margin: 14px 0; }
+.row { display: flex; gap: 10px; } .row button { flex: 1; }
+.small { color: var(--dim); font-size: 10px; }
+.bet { display: flex; gap: 12px; align-items: center; padding: 12px; border: 4px solid var(--c); margin-bottom: 10px; background: var(--panel); }
+.bet .nm { color: var(--c); font-size: 12px; } .bet .tg { font-size: 9px; color: var(--dim); line-height: 1.6; }
+.bet.sel { background: #332; }
+ol#mini { list-style: none; padding: 0; margin: 0; }
+ol#mini li { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 2px dashed var(--line); }
+#bars .b { margin: 10px 0; } #bars .b .lab { display: flex; justify-content: space-between; font-size: 11px; }
+#bars .b .bar { height: 18px; background: #000; border: 3px solid var(--line); } #bars .b .bar i { display: block; height: 100%; background: var(--amber); }
+#cam { width: 100%; border: 4px solid var(--line); margin-bottom: 10px; }

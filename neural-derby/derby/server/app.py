@@ -366,6 +366,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             role = "phone"   # a wrong or missing token makes it an ordinary phone, quietly
         await state.hub.connect(ws, role)
         try:
+            # First, the role the server accepted: a team phone with an old token can then say so.
+            await ws.send_text(json.dumps({"type": "hello", "role": role}))
             await ws.send_text(json.dumps({"type": "state", **state_payload(state)}))
             if state.show.act in (Act.HORSES, Act.DERBY, Act.SPRINT, Act.VERDICT, Act.SHIP):
                 await ws.send_text(json.dumps({"type": "horses", "cards": horse_cards(state)}))
