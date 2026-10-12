@@ -2,10 +2,12 @@ from pathlib import Path
 
 import numpy as np
 import onnxruntime as ort
+import pytest
 import torch
+import torch.nn as nn
 
 from derby.export.bench import bench_cpu
-from derby.export.onnx_export import export_onnx
+from derby.export.onnx_export import ExportMismatch, export_onnx
 from derby.horses import stable
 
 
@@ -26,6 +28,23 @@ def test_export_leaves_original_model_on_its_device_and_mode(tmp_path: Path):
     m = stable.build_textbook().train()
     export_onnx(m, tmp_path / "t.onnx")
     assert m.training
+
+
+def test_export_raises_when_onnx_disagrees_with_torch(tmp_path: Path):
+    class Liar(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc = nn.Linear(3 * 96 * 96, 6)
+
+        def forward(self, x):
+            out = self.fc(x.flatten(1))
+            # The exporter traces the model, so the saved file gets the extra +1, but the plain torch run does not.
+            if torch.jit.is_tracing():
+                out = out + 1.0
+            return out
+
+    with pytest.raises(ExportMismatch):
+        export_onnx(Liar(), tmp_path / "bad.onnx")
 
 
 def test_bench_cpu_returns_positive_ms(tmp_path: Path):
