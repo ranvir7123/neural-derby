@@ -18,7 +18,17 @@
     const t = $("toast"); t.textContent = msg; t.style.display = "block";
     clearTimeout(toastTimer); toastTimer = setTimeout(() => t.style.display = "none", ms || 2500);
   }
-  function post(url, body) { return fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) }).then(r => r.json()); }
+  // Never throws. A server that is down, or a reply that is not JSON (a crash page), comes back as
+  // {error: ...}, so every operator key can show what went wrong instead of doing nothing.
+  async function post(url, body) {
+    let r;
+    try { r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) }); }
+    catch (e) { return { error: "CANNOT REACH THE SERVER ON THE LAPTOP." }; }
+    let j;
+    try { j = await r.json(); } catch (e) { return { error: `THE SERVER SENT A BROKEN REPLY (STATUS ${r.status}).` }; }
+    if (!r.ok && !(j && j.error)) return { error: `THE SERVER REFUSED (STATUS ${r.status}).` };
+    return j;
+  }
   function say(text) { if (muted || !window.speechSynthesis) return; const u = new SpeechSynthesisUtterance(text); u.rate = 1.05; u.pitch = 1.1; speechSynthesis.speak(u); }
   function spriteCanvas(colour, scale) { const c = document.createElement("canvas"); c.width = S.W * scale; c.height = S.H * scale; S.drawHorse(c.getContext("2d"), 0, 0, scale, colour, 0); return c; }
 
@@ -53,9 +63,11 @@
       t.innerHTML = `<img src="data:image/png;base64,${p[0]}">`; wall.appendChild(t);
       setTimeout(() => { if (run !== previewRun) return; t.classList.add("flip"); t.querySelector("img").src = "data:image/png;base64," + p[1]; }, 600 + i * 120);
     });
-    const before = m.n_before || m.pairs.length, after = m.n_after || before * 10;
+    // Only the server's own numbers go on screen. n_before 0 means no phone photos yet: the wall shows the backup set.
+    const caption = m.n_before > 0 ? `${fmt(m.n_before)} PHOTOS JUST BECAME ${fmt(m.n_after)}`
+      : (m.pairs.length ? "NO PHONE PHOTOS YET: SHOWING THE BACKUP SET" : "NO PHOTOS TO SHOW YET");
     $("aug-caption").textContent = "MULTIPLYING...";
-    setTimeout(() => { if (run !== previewRun) return; $("aug-caption").textContent = `${fmt(before)} PHOTOS JUST BECAME ${fmt(after)}`; A.jingle(); }, 600 + m.pairs.length * 120);
+    setTimeout(() => { if (run !== previewRun) return; $("aug-caption").textContent = caption; A.jingle(); }, 600 + m.pairs.length * 120);
   }
 
   // ---------- horses ----------
@@ -209,12 +221,16 @@
 
   // ---------- keys ----------
   document.addEventListener("keydown", async (e) => {
-    if (e.repeat) return;   // holding a key down must not fire it again and skip acts
+    // A held key must not fire again and skip acts. Browser shortcuts (Ctrl+R reload, Ctrl+L address bar,
+    // Alt+Left back...) belong to the browser, never to the show.
+    if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
     A.unlock();
-    if (e.code === "Space") { e.preventDefault(); const r = await post("/api/advance"); if (r.error) toast(r.error); }
-    else if (e.key === "g" || e.key === "G") post("/api/gate/close");
-    else if (e.key === "l" || e.key === "L") post("/api/sprint/laptop");
-    else if (e.key === "r" || e.key === "R") { const r = await post("/api/replay"); if (r.error) toast(r.error); }
+    const send = async (url) => { const r = await post(url); if (r.error) toast(r.error); };
+    if (e.code === "Space") { e.preventDefault(); await send("/api/advance"); }
+    else if (e.key === "g" || e.key === "G") await send("/api/gate/close");
+    else if (e.key === "l" || e.key === "L") await send("/api/sprint/laptop");
+    // A replay wipes the Sprint, verdict and ship results, so a stray R in a later act must not reach the server.
+    else if (e.key === "r" || e.key === "R") { if (state.act === "DERBY") await send("/api/replay"); else toast("R REPLAYS THE RACE. IT ONLY WORKS DURING THE DERBY."); }
     else if (e.key === "m" || e.key === "M") { muted = A.toggleMute(); toast(muted ? "MUTED" : "SOUND ON"); }
     else if (e.key === "ArrowRight" && state.act === "VERDICT") { verdictPage = Math.min(verdictPage + 1, Math.ceil(horses.length / 2) - 1); renderVerdict(); }
     else if (e.key === "ArrowLeft" && state.act === "VERDICT") { verdictPage = Math.max(verdictPage - 1, 0); renderVerdict(); }
