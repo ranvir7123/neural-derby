@@ -2,6 +2,8 @@
 import base64
 import io
 import re
+import struct
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -36,6 +38,7 @@ class LiveStore:
         self.classes = classes
         self.long_side = long_side
         self._photos: list[Photo] = []
+        self._lock = threading.Lock()
         self.root.mkdir(parents=True, exist_ok=True)
 
     def count(self) -> int:
@@ -48,33 +51,38 @@ class LiveStore:
         return list(self._photos)
 
     def add(self, device: str, class_name: str, data: bytes) -> Photo:
-        if not DEVICE_RE.fullmatch(device or ""):
-            raise LiveError("Reload the page and try again.")
-        if class_name not in self.classes:
-            raise LiveError("Pick one of the six objects first.")
-        if len(data) > self.caps["max_bytes"]:
-            raise LiveError("That photo is too big. Try again with a smaller one.")
-        if len(self._photos) >= self.caps["total"]:
-            raise LiveError("The paddock is full. Thanks! Now watch the race.")
-        if self.count_for(device) >= self.caps["per_device"]:
-            raise LiveError(f"You have sent your {self.caps['per_device']} photos. Now place a bet!")
-        try:
-            probe = Image.open(io.BytesIO(data))
-            probe.verify()
-            im = Image.open(io.BytesIO(data))
-            if im.format not in ("JPEG", "PNG"):
-                raise LiveError("Only JPEG or PNG photos, please.")
-            im = ImageOps.exif_transpose(im).convert("RGB")
-        except (UnidentifiedImageError, OSError, SyntaxError):
-            raise LiveError("That file is not a photo we can read.")
-        im.thumbnail((self.long_side, self.long_side))
-        folder = self.root / class_name
-        folder.mkdir(parents=True, exist_ok=True)
-        path = folder / f"{device}_{self.count_for(device)}.jpg"
-        im.save(path, "JPEG", quality=90)
-        photo = Photo(device, class_name, path)
-        self._photos.append(photo)
-        return photo
+        # One upload at a time: counting, naming, saving and recording must not interleave.
+        with self._lock:
+            if not DEVICE_RE.fullmatch(device or ""):
+                raise LiveError("Reload the page and try again.")
+            if class_name not in self.classes:
+                raise LiveError("Pick one of the six objects first.")
+            if len(data) > self.caps["max_bytes"]:
+                raise LiveError("That photo is too big. Try again with a smaller one.")
+            if len(self._photos) >= self.caps["total"]:
+                raise LiveError("The paddock is full. Thanks! Now watch the race.")
+            if self.count_for(device) >= self.caps["per_device"]:
+                raise LiveError(f"You have sent your {self.caps['per_device']} photos. Now place a bet!")
+            try:
+                probe = Image.open(io.BytesIO(data))
+                probe.verify()
+                im = Image.open(io.BytesIO(data))
+                # Many phone cameras write MPO, a JPEG that holds more than one picture.
+                if im.format not in ("JPEG", "MPO", "PNG"):
+                    raise LiveError("Only JPEG or PNG photos, please.")
+                im = ImageOps.exif_transpose(im).convert("RGB")
+            except Image.DecompressionBombError:
+                raise LiveError("That photo is too big. Try again with a smaller one.") from None
+            except (UnidentifiedImageError, OSError, SyntaxError, ValueError, struct.error):
+                raise LiveError("That file is not a photo we can read.") from None
+            im.thumbnail((self.long_side, self.long_side))
+            folder = self.root / class_name
+            folder.mkdir(parents=True, exist_ok=True)
+            path = folder / f"{device}_{self.count_for(device)}.jpg"
+            im.save(path, "JPEG", quality=90)
+            photo = Photo(device, class_name, path)
+            self._photos.append(photo)
+            return photo
 
     def split_by_device(self, seed: int, min_for_split: int = config.MIN_LIVE_FOR_SPLIT) -> tuple[list[Photo], list[Photo]]:
         """Half the devices go to test, half to train. Too few photos: everything is test."""

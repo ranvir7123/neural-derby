@@ -1,4 +1,6 @@
 import io
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -83,3 +85,60 @@ def test_tensors_and_thumbnail(store: LiveStore):
     x, y = LiveStore.tensors([p], img=32)
     assert x.shape == (1, 3, 32, 32) and y.tolist() == [5]
     assert LiveStore.thumbnail_b64(p).startswith("/9j/")  # base64 of a JPEG starts like this
+
+
+def image_bytes(fmt: str, size=(120, 80), colour=(10, 200, 30)) -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", size, colour).save(buf, fmt)
+    return buf.getvalue()
+
+
+def test_png_upload_is_accepted(store: LiveStore):
+    p = store.add("dev_0001", "book", image_bytes("PNG"))
+    assert p.path.exists() and store.count() == 1
+
+
+def test_gif_upload_is_rejected_with_a_phone_safe_message(store: LiveStore):
+    with pytest.raises(LiveError, match="Only JPEG or PNG"):
+        store.add("dev_0001", "book", image_bytes("GIF"))
+    assert store.count() == 0
+
+
+def test_mpo_phone_photo_is_accepted(store: LiveStore):
+    # Many phone cameras write MPO (a JPEG that holds more than one picture).
+    im = Image.new("RGB", (120, 80), (10, 200, 30))
+    buf = io.BytesIO()
+    im.save(buf, "MPO", save_all=True, append_images=[im.copy()])
+    data = buf.getvalue()
+    assert Image.open(io.BytesIO(data)).format == "MPO"  # prove what we feed in
+    p = store.add("dev_0001", "bottle", data)
+    assert p.path.exists() and store.count() == 1
+
+
+def test_overlapping_uploads_from_one_device_never_lose_or_duplicate_a_photo(tmp_path: Path):
+    store = LiveStore(tmp_path / "live", caps={"per_device": 3, "total": 100, "max_bytes": 50_000})
+    data = jpeg_bytes()
+    start_together = threading.Barrier(6)
+
+    def upload(_):
+        start_together.wait(timeout=10)
+        try:
+            return store.add("dev_0001", "pen", data)
+        except LiveError as err:
+            return err
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        results = list(pool.map(upload, range(6)))
+    saved = [r for r in results if not isinstance(r, LiveError)]
+    refused = [r for r in results if isinstance(r, LiveError)]
+    assert len(saved) == 3 and len(refused) == 3
+    assert store.count_for("dev_0001") == 3 and store.count() == 3
+    assert len({p.path for p in saved}) == 3 and all(p.path.exists() for p in saved)
+
+
+def test_decompression_bomb_becomes_a_live_error(store: LiveStore, monkeypatch: pytest.MonkeyPatch):
+    data = jpeg_bytes(size=(100, 100))  # 10,000 pixels
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)  # more than twice over, so Pillow raises
+    with pytest.raises(LiveError, match="too big"):
+        store.add("dev_0001", "shoe", data)
+    assert store.count() == 0
