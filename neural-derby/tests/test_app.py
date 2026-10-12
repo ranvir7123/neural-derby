@@ -67,6 +67,11 @@ def test_bets_only_in_horses_act(client: TestClient):
     assert client.get("/api/state").json()["act"] == "HORSES"
     assert client.post("/api/bet", json={"device": "dev_0001", "horse": "textbook"}).status_code == 200
     assert client.post("/api/bet", json={"device": "dev_0001", "horse": "unicorn"}).status_code == 400
+    import time
+    for _ in range(200):                              # the data loads in the background; let it finish before the test ends
+        if client.get("/api/state").json()["data_loaded"]:
+            break
+        time.sleep(0.05)
 
 
 def test_full_run_broadcasts_lap_events_and_finishes(client: TestClient):
@@ -220,3 +225,50 @@ def test_lap_events_never_send_nan_to_the_browser():
         strict_json(json.dumps(ev.to_dict()))                              # a bare NaN breaks the page
     parsed = strict_json(json.dumps(finite_or_none(ev.to_dict())))
     assert parsed["loss"] is None and parsed["train_acc"] == 0.5 and parsed["test_acc_live"] is None
+
+
+def test_sprint_results_produce_champion_and_bet_settlement(client: TestClient):
+    with client.websocket_connect("/ws?role=stadium") as ws:
+        ws.receive_json()
+        for _ in range(3):
+            client.post("/api/advance")
+        client.post("/api/join", json={"device": "dev_0001", "nick": "Tejas"})
+        client.post("/api/bet", json={"device": "dev_0001", "horse": "featherweight"})
+        import time
+        for _ in range(200):
+            if client.get("/api/state").json()["data_loaded"]:
+                break
+            time.sleep(0.05)
+        client.post("/api/advance")                                  # DERBY
+        while ws.receive_json()["type"] != "race_done":
+            pass
+        client.post("/api/advance")                                  # SPRINT (sprint_request goes to team/control only)
+        client.post("/api/sprint-result", json={"horse": "textbook", "ms": 20.0, "device": "phone", "token": "tok"})
+        r = client.post("/api/sprint-result", json={"horse": "featherweight", "ms": 10.0, "device": "phone", "token": "tok"})
+        assert r.json()["have"] == 2
+        msg = ws.receive_json()
+        while msg["type"] != "sprint":
+            msg = ws.receive_json()
+        assert msg["device"] == "phone"
+        assert [(s["horse"], s["rank"]) for s in msg["sprint"]] == [("featherweight", 1), ("textbook", 2)]
+        # Each horse's race rank plus Sprint rank is 3 with two horses, so accuracy breaks the tie. Work the
+        # expected champion out from the real race results, not from the message under test.
+        race = client.app.state.derby.race_standings
+        sprint_rank = {"featherweight": 1, "textbook": 2}
+        champion = min(race, key=lambda s: (s.rank + sprint_rank[s.horse], -s.final_acc, s.horse)).horse
+        assert [c["horse"] for c in msg["champion"]][0] == champion and msg["champion"][0]["rank"] == 1
+        assert {c["horse"]: c["sprint_rank"] for c in msg["champion"]} == sprint_rank
+        # Tejas bet on featherweight, so he wins exactly when featherweight is the champion / the Race winner
+        assert msg["winners"] == {"champion": ["Tejas"] if champion == "featherweight" else [],
+                                  "race": ["Tejas"] if race[0].horse == "featherweight" else []}
+        assert msg["bet_results"] == {"dev_0001": champion == "featherweight"}
+        client.post("/api/advance")                                  # VERDICT
+        msg = ws.receive_json()
+        while msg["type"] != "verdict":
+            msg = ws.receive_json()
+        assert set(msg["verdicts"]) == {"textbook", "featherweight"}
+        client.post("/api/advance")                                  # SHIP
+        msg = ws.receive_json()
+        while msg["type"] != "ship":
+            msg = ws.receive_json()
+        assert client.get("/models/champion.onnx").status_code == 200
