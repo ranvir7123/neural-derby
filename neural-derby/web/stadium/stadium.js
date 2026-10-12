@@ -8,6 +8,18 @@
   let lapNow = 0, verdictPage = 0, verdictData = null, factsData = null, muted = false;
   let toastTimer = null, previewRun = 0;
 
+  // ---------- fit the 1920x1080 picture to whatever screen the projector has ----------
+  let fitted = "";
+  function fit() {
+    const s = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+    const dx = (window.innerWidth - 1920 * s) / 2, dy = (window.innerHeight - 1080 * s) / 2;
+    const tf = `translate(${dx}px, ${dy}px) scale(${s})`;
+    if (tf !== fitted) { fitted = tf; document.body.style.transformOrigin = "0 0"; document.body.style.transform = tf; }
+  }
+  window.addEventListener("resize", fit);
+  setInterval(fit, 500);   // some screens (projector plug-in, F11) change size without a resize event
+  fit();
+
   // ---------- helpers ----------
   const pct = (f) => Math.round(f * 100) + "%";
   const fmt = (n) => n.toLocaleString("en-US");

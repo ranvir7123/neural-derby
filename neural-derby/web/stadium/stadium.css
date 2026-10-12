@@ -5,7 +5,8 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: "PS2P", monospace; overflow: hidden; }
-body { width: 1920px; height: 1080px; }
+/* The page is drawn at 1920x1080 and then shrunk or enlarged as one picture to fit the real screen (see fit() in stadium.js). */
+body { width: 1920px; height: 1080px; transform-origin: 0 0; }
 .scanlines { pointer-events: none; position: fixed; inset: 0; z-index: 50;
   background: repeating-linear-gradient(0deg, rgba(0,0,0,0.18) 0 2px, transparent 2px 4px); }
 header { height: 90px; display: flex; align-items: center; justify-content: space-between; padding: 0 40px;
